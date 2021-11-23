@@ -183,11 +183,6 @@ namespace UnitTestBoilerplate.Services
 				throw new InvalidOperationException("Could not find class, struct or record declaration.");
 			}
 
-			if (firstClassLikeDeclaration.ChildTokens().Any(node => node.Kind() == SyntaxKind.AbstractKeyword))
-			{
-				throw new InvalidOperationException("Cannot unit test an abstract class.");
-			}
-
 			SyntaxToken classIdentifierToken = firstClassLikeDeclaration.ChildTokens().FirstOrDefault(n => n.Kind() == SyntaxKind.IdentifierToken);
 			if (classIdentifierToken == default(SyntaxToken))
 			{
@@ -252,7 +247,8 @@ namespace UnitTestBoilerplate.Services
 			foreach (MethodDeclarationSyntax methodDeclaration in
 				firstClassLikeDeclaration.ChildNodes().Where(
 					n => n.Kind() == SyntaxKind.MethodDeclaration
-					&& ((MethodDeclarationSyntax)n).Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword))))
+					&& ((MethodDeclarationSyntax)n).Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword) || m.IsKind(SyntaxKind.ProtectedKeyword))
+					&& ((MethodDeclarationSyntax)n).Modifiers.All(m => !m.IsKind(SyntaxKind.AbstractKeyword))))
 			{
 				var parameterList = GetParameterListNodes(methodDeclaration).ToList();
 				var parameterTypes = GetArgumentDescriptors(parameterList, semanticModel, mockFramework);
@@ -267,7 +263,10 @@ namespace UnitTestBoilerplate.Services
 
 				string returnType = methodDeclaration.ReturnType.ToFullString();
 
-				methodDeclarations.Add(new MethodDescriptor(methodDeclaration.Identifier.Text, parameterTypes, isAsync, hasReturnType, returnType, attributeList));
+				SymbolInfo symbolInfo = semanticModel.GetSymbolInfo(methodDeclaration.ReturnType);
+				var methodReturnType = new TypeDescriptor(symbolInfo, methodDeclaration.ReturnType, methodDeclaration.ReturnType.Kind());
+
+				methodDeclarations.Add(new MethodDescriptor(methodDeclaration.Identifier.Text, parameterTypes, isAsync, hasReturnType, returnType, attributeList, methodReturnType));
 			}
 
 			string unitTestNamespace;
@@ -646,7 +645,7 @@ namespace UnitTestBoilerplate.Services
 				case "MethodInvocationPrefix":
 					if (methodDescriptor.HasReturnType)
 					{
-						builder.Append("var result = ");
+						builder.Append("_result = ");
 					}
 
 					if (methodDescriptor.IsAsync)
@@ -669,6 +668,9 @@ namespace UnitTestBoilerplate.Services
 
 				case "UriParameters":
 					WriteUriParameters(builder, methodDescriptor);
+					break;
+				case "InitializeParameters":
+					WriteInitializeParameters(builder, context, methodDescriptor);
 					break;
 
 				default:
@@ -740,7 +742,40 @@ namespace UnitTestBoilerplate.Services
 					argumentValue = "TODO";
 				}
 
-				builder.Append($"{typeInformation} {methodDescriptor.MethodParameters[j].ArgumentName} = {argumentValue};");
+				builder.Append($"private {typeInformation} _{methodDescriptor.MethodParameters[j].ArgumentName};");
+				if (j < numberOfParameters - 1)
+				{
+					builder.AppendLine();
+				}
+			}
+			if (methodDescriptor.HasReturnType)
+			{
+				builder.AppendLine();
+				var type = methodDescriptor.IsAsync ? methodDescriptor.MethodReturnType.TaskType : methodDescriptor.MethodReturnType.ToString();
+				builder.Append($"private {type} _result;");
+			}
+		}
+
+		private static void WriteInitializeParameters(StringBuilder builder, TestGenerationContext context, MethodDescriptor methodDescriptor)
+		{
+			int numberOfParameters = methodDescriptor.MethodParameters.Count();
+			for (int j = 0; j < numberOfParameters; j++)
+			{
+				TypeDescriptor typeInformation = methodDescriptor.MethodParameters[j].TypeInformation;
+
+				string argumentValue;
+				if (typeInformation.TypeSymbol != null)
+				{
+					// If we have proper type information, generate the default expression for this type
+					var generator = Microsoft.CodeAnalysis.Editing.SyntaxGenerator.GetGenerator(context.Document);
+					argumentValue = generator.DefaultExpression(typeInformation.TypeSymbol).ToString();
+				}
+				else
+				{
+					argumentValue = "TODO";
+				}
+
+				builder.Append($"_{methodDescriptor.MethodParameters[j].ArgumentName} = {argumentValue};");
 				if (j < numberOfParameters - 1)
 				{
 					builder.AppendLine();
@@ -786,11 +821,11 @@ namespace UnitTestBoilerplate.Services
 						break;
 				}
 
-				builder.Append($"{methodDescriptor.MethodParameters[j].ArgumentName}");
+				builder.Append($"_{methodDescriptor.MethodParameters[j].ArgumentName}");
 
 				if (j < numberOfParameters - 1)
 				{
-					builder.AppendLine(",");
+					builder.Append(",");
 				}
 			}
 		}
@@ -983,7 +1018,7 @@ namespace UnitTestBoilerplate.Services
 
 			if (context.ConstructorTypes.Count > 0)
 			{
-				builder.AppendLine("(");
+				builder.Append("(");
 
 				for (int i = 0; i < context.ConstructorTypes.Count; i++)
 				{
@@ -1002,7 +1037,7 @@ namespace UnitTestBoilerplate.Services
 
 					if (i < context.ConstructorTypes.Count - 1)
 					{
-						builder.AppendLine(",");
+						builder.Append(",");
 					}
 				}
 

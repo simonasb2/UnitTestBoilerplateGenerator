@@ -86,9 +86,17 @@ namespace UnitTestBoilerplate.Model
 			switch (nodeKind)
 			{
 				case SyntaxKind.IdentifierName:
-				case SyntaxKind.GenericName:
 				case SyntaxKind.QualifiedName:
 					this.TypeName = symbolInfo.Symbol.Name;
+					break;
+				case SyntaxKind.GenericName:
+					this.TypeName = typeSyntax.ToString();
+					if (TypeName.StartsWith("Task<"))
+					{
+						TaskType = TypeName.Substring("Task<".Length);
+						TaskType = TaskType.Remove(TaskType.Length - 1);
+						//TaskType = (TypeSymbol as INamedTypeSymbol).TypeArguments[0].ToString();
+					}
 					break;
 				default:
 					this.TypeName = typeSyntax.ToString();
@@ -151,5 +159,10 @@ namespace UnitTestBoilerplate.Model
 		/// The list of child generic type arguments.
 		/// </summary>
 		public List<TypeDescriptor> GenericTypeArguments { get; } = new List<TypeDescriptor>();
+
+		/// <summary>
+		/// Task generic type. Used to determine concrete type that is returned from the async method
+		/// </summary>
+		public string TaskType { get; set; }
 	}
 }
